@@ -31,12 +31,43 @@
 
 <br>
 
-## Stay Tuned for a Faster and Better Variant of SplaTAM! 
+---
+
+## 实机部署说明
+
+本仓库是 SplaTAM (CVPR 2024) 在真实平台上的部署复现，在原版代码基础上扩展了对多种传感器和使用场景的支持。
+
+### 支持的传感器 / 平台
+
+| 传感器 | 平台 | 模式 | 指南 |
+|--------|------|------|------|
+| **Orbbec Astra S** | Wheeltec 小车（Jetson Orin NX）| 在线 / 离线 | [3d_rec_AstraS.md](./3d_rec_AstraS.md) |
+| **Orbbec Gemini 336L** | 手持 / Wheeltec 小车 | 在线 / 离线 | [3d_rec_gemini336l.md](./3d_rec_gemini336l.md) |
+| **iPhone LiDAR** | iPhone 12 Pro 及以上（NeRFCapture App）| 在线 / 离线 | [3d_rec_iphone.md](./3d_rec_iphone.md) |
+
+### 硬件平台
+
+- **机器人**：Wheeltec senior_4wd_bs，主控 Jetson Orin NX 16GB，ROS2 Humble
+- **深度相机**：Orbbec Astra S（结构光，0.4–4m）、Orbbec Gemini 336L（双目立体，0.17–20m）
+- **手持**：iPhone Pro 系列 LiDAR（通过 NeRFCapture App 经 WiFi 传输）
+
+### 新增功能
+
+- **在线 SLAM**：实时订阅 ROS2 话题，边采集边重建（`scripts/wheeltec_online_slam.py`）
+- **离线 SLAM**：录制 ROS2 bag → 转换格式 → 高质量重建
+- **ROS2 bag 转换**：支持 ROS1/ROS2 格式，自动提取 RGB-D 帧（`scripts/wheeltec_rosbag_to_splatam.py`）
+- **CloudCompare 点云导出**：标准 RGB 点云 PLY，可在 CloudCompare / MeshLab 直接显示颜色（`scripts/export_ply_cloudcompare.py`）
+- **多相机配置**：`configs/wheeltec/`（小车）、`configs/hand/`（手持 Gemini 336L）、`configs/iphone/`（iPhone）
+
+---
 
 <!-- TABLE OF CONTENTS -->
 <details open="open" style='padding: 10px; border-radius:5px 30px 30px 5px; border-style: solid; border-width: 1px;'>
   <summary>Table of Contents</summary>
   <ol>
+    <li>
+      <a href="#实机部署说明">实机部署说明（多传感器平台）</a>
+    </li>
     <li>
       <a href="#installation">Installation</a>
     </li>

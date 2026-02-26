@@ -78,6 +78,7 @@ class ROS2FrameReceiver:
         self._cy = self.cam_cfg.get('cy', 239.5)
         self._stop_event = threading.Event()
         self._frame_count = 0
+        self._imu_buffer = deque(maxlen=500)  # ~5s at 100 Hz
 
         # Initialize ROS2
         rclpy.init()
@@ -162,6 +163,14 @@ class ROS2FrameReceiver:
         # Debug: print connectivity status after 3 seconds
         self._debug_timer = self.node.create_timer(3.0, self._debug_status)
 
+        # Optional IMU subscriber for gyroscope-aided rotation initialization
+        if self.ros2_cfg.get('use_imu_for_propagation', False):
+            from sensor_msgs.msg import Imu as ImuMsg
+            _imu_topic = self.ros2_cfg.get('imu_topic', '/camera/gyro_accel/sample')
+            self._imu_sub = self.node.create_subscription(
+                ImuMsg, _imu_topic, self._imu_callback, qos_best_effort)
+            self.node.get_logger().info(f'IMU enabled: {_imu_topic}')
+
     def _debug_rgb_callback(self, msg):
         self._debug_rgb_count += 1
 
@@ -230,6 +239,46 @@ class ROS2FrameReceiver:
         odom_mat[2, 3] = pos.z
         with self._lock:
             self._latest_odom = odom_mat.copy()
+
+    def _imu_callback(self, msg):
+        """Cache gyroscope measurements for inter-frame rotation integration."""
+        ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        with self._lock:
+            self._imu_buffer.append({
+                'ts': ts,
+                'gyro': np.array([
+                    msg.angular_velocity.x,
+                    msg.angular_velocity.y,
+                    msg.angular_velocity.z,
+                ], dtype=np.float64),
+            })
+
+    def integrate_rotation(self, t_start, t_end):
+        """
+        Integrate gyroscope measurements from t_start to t_end using the
+        Rodrigues formula. Returns a 3×3 delta rotation matrix expressed in
+        the IMU/camera body frame at t_start.
+        Returns np.eye(3) if no measurements exist in the window.
+        """
+        with self._lock:
+            window = [m for m in self._imu_buffer if t_start < m['ts'] <= t_end]
+        if not window:
+            return np.eye(3, dtype=np.float64)
+        R = np.eye(3, dtype=np.float64)
+        prev_ts = t_start
+        for m in window:
+            dt = m['ts'] - prev_ts
+            omega = m['gyro']
+            angle = np.linalg.norm(omega) * dt
+            if angle > 1e-9:
+                axis = omega / (np.linalg.norm(omega) + 1e-12)
+                K = np.array([[0.0, -axis[2], axis[1]],
+                              [axis[2], 0.0, -axis[0]],
+                              [-axis[1], axis[0], 0.0]])
+                dR = np.eye(3) + np.sin(angle) * K + (1.0 - np.cos(angle)) * (K @ K)
+                R = R @ dR
+            prev_ts = m['ts']
+        return R
 
     def _synced_callback(self, rgb_msg, depth_msg):
         """Receive synchronized RGB + Depth, convert to numpy."""
@@ -359,7 +408,10 @@ def online_slam_loop(receiver: ROS2FrameReceiver, save_path: Path, config: dict,
     time_idx = 0
 
     print(f"\n{'='*60}")
-    print(f"  SplaTAM Online SLAM — Wheeltec + Astra S")
+    use_imu = config.get('use_imu_for_propagation', False)
+    prev_frame_ts = None
+
+    print(f"  SplaTAM Online SLAM — Wheeltec RGB-D")
     print(f"  Max frames: {num_frames}")
     print(f"  Tracking iters: {config['tracking']['num_iters']}")
     print(f"  Mapping iters: {config['mapping']['num_iters']}")
@@ -380,6 +432,12 @@ def online_slam_loop(receiver: ROS2FrameReceiver, save_path: Path, config: dict,
         rgb_np = frame['rgb']      # HxWx3 uint8
         depth_np = frame['depth']  # HxW float32 (meters)
         odom = frame['odom']       # 4x4 or None
+        curr_frame_ts = frame['timestamp']
+
+        # Integrate gyroscope for rotation-aided pose initialization
+        imu_dR = None
+        if use_imu and prev_frame_ts is not None and time_idx > 0:
+            imu_dR = receiver.integrate_rotation(prev_frame_ts, curr_frame_ts)
 
         print(f"\rFrame {time_idx + 1}/{num_frames} | "
               f"Gaussians: {params['means3D'].shape[0] if params is not None else 0}", end="")
@@ -468,6 +526,15 @@ def online_slam_loop(receiver: ROS2FrameReceiver, save_path: Path, config: dict,
         # ---- Initialize Camera Pose ----
         if time_idx > 0:
             params = initialize_camera_pose(params, time_idx, forward_prop=config['tracking']['forward_prop'])
+            # Override rotation with IMU gyroscope integration when available.
+            # w2c_{t+1} = R_imu^T @ w2c_t  (body-frame delta from gyro)
+            if imu_dR is not None:
+                with torch.no_grad():
+                    prev_rot = F.normalize(params['cam_unnorm_rots'][..., time_idx - 1].detach())
+                    R_w2c_prev = build_rotation(prev_rot)
+                    imu_dR_t = torch.from_numpy(imu_dR).float().cuda()
+                    R_w2c_new = imu_dR_t.T @ R_w2c_prev
+                    params['cam_unnorm_rots'][..., time_idx] = matrix_to_quaternion(R_w2c_new)
 
         # ============================================================
         # TRACKING
@@ -680,6 +747,7 @@ def online_slam_loop(receiver: ROS2FrameReceiver, save_path: Path, config: dict,
             np.save(str(ckpt_output_dir / f"keyframe_time_indices{time_idx}.npy"),
                     np.array(keyframe_time_indices))
 
+        prev_frame_ts = curr_frame_ts
         torch.cuda.empty_cache()
         time_idx += 1
 
