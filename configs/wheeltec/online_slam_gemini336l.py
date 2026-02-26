@@ -61,13 +61,13 @@ config = dict(
     save_checkpoints=True,
     checkpoint_interval=50,
     use_wandb=False,
-    # Gemini 336L approximate intrinsics at 1280×720.
-    # These will be overridden automatically by /camera/color/camera_info.
+    # Gemini 336L calibrated intrinsics at 1280×720 (measured on wheeltec unit, 2025-12).
+    # Overridden automatically by /camera/color/camera_info in online mode.
     camera=dict(
-        fx=650.0,
-        fy=650.0,
-        cx=640.0,
-        cy=360.0,
+        fx=607.4463,
+        fy=607.3991,
+        cx=639.1863,
+        cy=361.7548,
         png_depth_scale=1000.0,  # Orbbec driver: depth in mm
         depth_near=0.17,         # Gemini 336L minimum depth
         depth_far=20.0,          # Maximum usable range

@@ -156,10 +156,10 @@ def extract_rosbag(bag_path, output_dir,
                 odom_msgs.append((timestamp, msg))
 
     if camera_intrinsics is None:
-        print("Warning: Camera intrinsics not found, using Astra S defaults")
+        print("Warning: Camera intrinsics not found in bag, using Gemini 336L defaults @ 1280x720")
         camera_intrinsics = np.array([
-            [570.3, 0.0, 319.5],
-            [0.0, 570.3, 239.5],
+            [607.4463, 0.0, 639.1863],
+            [0.0, 607.3991, 361.7548],
             [0.0, 0.0, 1.0]
         ])
 

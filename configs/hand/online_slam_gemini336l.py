@@ -64,11 +64,12 @@ config = dict(
     use_wandb = False,
 
     # ---- 相机参数（内参由 camera_info 自动覆盖）----
+    # 实测标定值 @ 1280×720（2025-12 wheeltec 小车实机）
     camera = dict(
-        fx = 650.0,
-        fy = 650.0,
-        cx = 640.0,
-        cy = 360.0,
+        fx = 607.4463,
+        fy = 607.3991,
+        cx = 639.1863,
+        cy = 361.7548,
         png_depth_scale = 1000.0,  # Orbbec 驱动深度单位：mm
         depth_near = 0.17,         # Gemini 336L 最近有效深度
         depth_far  = 20.0,         # 最大深度范围

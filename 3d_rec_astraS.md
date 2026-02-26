@@ -112,6 +112,7 @@ experiments/Wheeltec_Online/online_office_0/
 # data.basedir = "./experiments/Wheeltec_Online"
 # data.sequence = "online_office_0"
 python scripts/splatam.py configs/wheeltec/splatam.py
+
 ```
 
 ---

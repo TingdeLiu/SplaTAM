@@ -55,7 +55,7 @@ config = dict(
     ),
     data=dict(
         basedir="./data/wheeltec_gemini",
-        gradslam_data_cfg="./configs/data/wheeltec.yaml",
+        gradslam_data_cfg="./configs/data/wheeltec_gemini336l.yaml",
         sequence=scene_name,
         # Color: 1280×720; Depth: 848×480 (upsampled to 1280×720 for densification)
         # Tracking at 640×360 (color ÷2) keeps intrinsics scaling exact.

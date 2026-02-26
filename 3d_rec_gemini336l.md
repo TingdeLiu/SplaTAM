@@ -10,6 +10,8 @@
 | 深度范围 | 0.17–20m（最优 0.25–6m） |
 | IMU | 支持（`/camera/gyro_accel/sample`） |
 | 接口 | USB 3.0 Type-C |
+| 内参 (1280×720) | fx=607.45, fy=607.40, cx=639.19, cy=361.75 |
+| 畸变系数 | k1=-0.02966, k2=0.03245, p1=-1.89e-5, p2=-3.20e-4, k3=-0.01113 |
 
 ---
 
@@ -42,11 +44,12 @@ SplaTAM/
 
 ```bash
 # 终端 1：启动相机驱动（确认 IMU 话题正常）
+ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
 ros2 launch orbbec_camera gemini_336l.launch.py
 ros2 topic hz /camera/gyro_accel/sample   # 应显示 ~100 Hz
 
 # 终端 2：启动手持 SLAM
-cd /path/to/SplaTAM
+cd VLN/SplaTAM
 python scripts/wheeltec_online_slam.py configs/hand/online_slam_gemini336l.py
 ```
 
@@ -430,9 +433,34 @@ ros2 topic info /camera/depth/image_raw --verbose
 ### 导出 PLY 点云
 
 ```bash
+# 方式 1: 3DGS 格式 (f_dc_0/1/2 球谐系数，用于 3DGS Viewer / 后续优化)
+# 手持   → experiments/Handheld_Gemini336L/<scene_name>_0/splat.ply
+python scripts/export_ply.py configs/hand/online_slam_gemini336l.py
+
+# 小车在线 → experiments/Wheeltec_Gemini336L/online_office_0/splat.ply
 python scripts/export_ply.py configs/wheeltec/online_slam_gemini336l.py
-# 输出：experiments/Wheeltec_Gemini336L/<run_name>/point_cloud.ply
+
+# 小车离线 → experiments/Wheeltec_Gemini336L/<scene_name>_0/splat.ply
+python scripts/export_ply.py configs/wheeltec/splatam_gemini336l.py
+
+# 方式 2: 标准 RGB 点云 (red/green/blue 顶点颜色，用于 CloudCompare / MeshLab)
+# 手持   → experiments/Handheld_Gemini336L/<scene_name>_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py
+
+# 小车在线 → experiments/Wheeltec_Gemini336L/online_office_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py
+
+# 小车离线 → experiments/Wheeltec_Gemini336L/<scene_name>_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam_gemini336l.py
+
+# 调整透明度阈值过滤噪点 (默认 0.5，越大越干净但点越少)
+python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py --opacity_threshold 0.3
 ```
+
+| 文件 | 格式 | 颜色属性 | 查看工具 |
+|------|------|----------|----------|
+| `splat.ply` | 3DGS | `f_dc_0/1/2` (球谐系数) | 3DGS Viewer, SuperSplat |
+| `splat_rgb.ply` | 标准点云 | `red/green/blue` (uint8) | CloudCompare, MeshLab, Open3D |
 
 ### 优化已保存的高斯地图
 
