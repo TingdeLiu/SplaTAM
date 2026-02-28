@@ -26,7 +26,7 @@ num_frames = -1                    # 不限帧数，Ctrl+C 手动结束
 # 建图：1280×720（彩色原生，全质量）
 full_res_width           = 1280
 full_res_height          = 720
-downscale_factor         = 2.0    # 跟踪分辨率：640×360
+downscale_factor         = 2.0    # 跟踪分辨率：640×360   2.0 
 densify_downscale_factor = 1.0    # 建图分辨率：1280×720
 
 # ---- SLAM 频率 ----

@@ -45,7 +45,6 @@ SplaTAM/
 ```bash
 # 终端 1：启动相机驱动（确认 IMU 话题正常）
 ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
-ros2 launch orbbec_camera gemini_336l.launch.py
 ros2 topic hz /camera/gyro_accel/sample   # 应显示 ~100 Hz
 
 # 终端 2：启动手持 SLAM
@@ -84,6 +83,25 @@ python viz_scripts/final_recon.py configs/hand/online_slam_gemini336l.py
 - 转弯时放慢，不要原地快速旋转
 - 优先扫有纹理区域，避免大面积白墙
 - Ctrl+C 结束后自动保存，无需等待
+
+### 重建结果后处理
+
+```bash
+# 导出 3DGS 格式点云 → experiments/Handheld_Gemini336L/<scene_name>_0/splat.ply
+python scripts/export_ply.py configs/hand/online_slam_gemini336l.py
+
+# 导出标准 RGB 点云（CloudCompare / MeshLab 可直接打开）
+# → experiments/Handheld_Gemini336L/<scene_name>_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py
+
+# 调整透明度阈值过滤噪点（默认 0.5，越大越干净但点越少）
+python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py --opacity_threshold 0.3
+```
+
+| 文件 | 格式 | 颜色属性 | 查看工具 |
+|------|------|----------|----------|
+| `splat.ply` | 3DGS | `f_dc_0/1/2` (球谐系数) | 3DGS Viewer, SuperSplat |
+| `splat_rgb.ply` | 标准点云 | `red/green/blue` (uint8) | CloudCompare, MeshLab, Open3D |
 
 ---
 
@@ -141,6 +159,28 @@ Ctrl+C → 当前帧处理完毕后安全退出
 python viz_scripts/final_recon.py configs/wheeltec/online_slam_gemini336l.py
 ```
 
+### 重建结果后处理
+
+```bash
+# 导出 3DGS 格式点云 → experiments/Wheeltec_Gemini336L/online_office_0/splat.ply
+python scripts/export_ply.py configs/wheeltec/online_slam_gemini336l.py
+
+# 导出标准 RGB 点云（CloudCompare / MeshLab 可直接打开）
+# → experiments/Wheeltec_Gemini336L/online_office_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py
+
+# 调整透明度阈值过滤噪点（默认 0.5，越大越干净但点越少）
+python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py --opacity_threshold 0.3
+
+# 在线可视化（建图时同步查看）
+python viz_scripts/online_recon.py configs/wheeltec/online_slam_gemini336l.py
+```
+
+| 文件 | 格式 | 颜色属性 | 查看工具 |
+|------|------|----------|----------|
+| `splat.ply` | 3DGS | `f_dc_0/1/2` (球谐系数) | 3DGS Viewer, SuperSplat |
+| `splat_rgb.ply` | 标准点云 | `red/green/blue` (uint8) | CloudCompare, MeshLab, Open3D |
+
 ---
 
 ## 方式三：离线建图（先录 bag，后重建）
@@ -179,22 +219,53 @@ data/wheeltec_gemini/my_scene/
 └── poses/      # 可选，如录了 /odom
 ```
 
-### 第三步：修改离线配置的 scene_name
-
-编辑 `configs/wheeltec/splatam_gemini336l.py`：
-
-```python
-scene_name = "my_scene"          # 与数据集目录名一致
-config['data']['basedir'] = "./data/wheeltec_gemini"
-```
-
-### 第四步：运行离线 SLAM
+### 第三步：运行离线 SLAM
 
 ```bash
+# 通过命令行参数指定场景名和数据目录（无需修改配置文件）
+python scripts/splatam.py configs/wheeltec/splatam_gemini336l.py \
+    --scene_name my_scene \
+    --basedir ./data/wheeltec_gemini
+
+# 如果数据已放在配置文件默认目录（./data/wheeltec_gemini），只需指定场景名：
+python scripts/splatam.py configs/wheeltec/splatam_gemini336l.py \
+    --scene_name my_scene
+
+# 也可以完全不加参数，使用配置文件中的默认值：
 python scripts/splatam.py configs/wheeltec/splatam_gemini336l.py
 ```
 
+> **参数说明**：`--scene_name` 覆盖配置中的 `sequence` 和 `run_name`；`--basedir` 覆盖数据根目录。两者不指定时使用配置文件中的默认值。
+
 离线模式迭代次数更多（tracking=50, mapping=60），重建质量优于在线模式。
+
+### 可视化
+
+```bash
+python viz_scripts/final_recon.py configs/wheeltec/splatam_gemini336l.py
+```
+
+### 重建结果后处理
+
+```bash
+# 导出 3DGS 格式点云 → experiments/Wheeltec_Gemini336L/<scene_name>_0/splat.ply
+python scripts/export_ply.py configs/wheeltec/splatam_gemini336l.py
+
+# 导出标准 RGB 点云（CloudCompare / MeshLab 可直接打开）
+# → experiments/Wheeltec_Gemini336L/<scene_name>_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam_gemini336l.py
+
+# 调整透明度阈值过滤噪点（默认 0.5，越大越干净但点越少）
+python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam_gemini336l.py --opacity_threshold 0.3
+
+# 后处理优化（可选，进一步提升渲染质量）
+python scripts/post_splatam_opt.py configs/wheeltec/post_splatam_opt_gemini336l.py
+```
+
+| 文件 | 格式 | 颜色属性 | 查看工具 |
+|------|------|----------|----------|
+| `splat.ply` | 3DGS | `f_dc_0/1/2` (球谐系数) | 3DGS Viewer, SuperSplat |
+| `splat_rgb.ply` | 标准点云 | `red/green/blue` (uint8) | CloudCompare, MeshLab, Open3D |
 
 ---
 
@@ -426,51 +497,4 @@ ros2 topic info /camera/depth/image_raw --verbose
 # ApproximateTimeSynchronizer(..., slop=0.15)  # 从 0.1 增加到 0.15
 ```
 
----
 
-## 重建结果后处理
-
-### 导出 PLY 点云
-
-```bash
-# 方式 1: 3DGS 格式 (f_dc_0/1/2 球谐系数，用于 3DGS Viewer / 后续优化)
-# 手持   → experiments/Handheld_Gemini336L/<scene_name>_0/splat.ply
-python scripts/export_ply.py configs/hand/online_slam_gemini336l.py
-
-# 小车在线 → experiments/Wheeltec_Gemini336L/online_office_0/splat.ply
-python scripts/export_ply.py configs/wheeltec/online_slam_gemini336l.py
-
-# 小车离线 → experiments/Wheeltec_Gemini336L/<scene_name>_0/splat.ply
-python scripts/export_ply.py configs/wheeltec/splatam_gemini336l.py
-
-# 方式 2: 标准 RGB 点云 (red/green/blue 顶点颜色，用于 CloudCompare / MeshLab)
-# 手持   → experiments/Handheld_Gemini336L/<scene_name>_0/splat_rgb.ply
-python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py
-
-# 小车在线 → experiments/Wheeltec_Gemini336L/online_office_0/splat_rgb.ply
-python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py
-
-# 小车离线 → experiments/Wheeltec_Gemini336L/<scene_name>_0/splat_rgb.ply
-python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam_gemini336l.py
-
-# 调整透明度阈值过滤噪点 (默认 0.5，越大越干净但点越少)
-python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py --opacity_threshold 0.3
-```
-
-| 文件 | 格式 | 颜色属性 | 查看工具 |
-|------|------|----------|----------|
-| `splat.ply` | 3DGS | `f_dc_0/1/2` (球谐系数) | 3DGS Viewer, SuperSplat |
-| `splat_rgb.ply` | 标准点云 | `red/green/blue` (uint8) | CloudCompare, MeshLab, Open3D |
-
-### 优化已保存的高斯地图
-
-```bash
-# 在更强算力的机器上后处理优化（可提升渲染质量）
-python scripts/post_splatam_opt.py configs/wheeltec/post_splatam_opt_gemini336l.py
-```
-
-### 在线可视化（建图时同步查看）
-
-```bash
-python viz_scripts/online_recon.py configs/wheeltec/online_slam_gemini336l.py
-```

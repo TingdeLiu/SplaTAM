@@ -995,12 +995,26 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("experiment", type=str, help="Path to experiment file")
+    parser.add_argument("--scene_name", type=str, default=None,
+                        help="Override scene name (data sequence & run_name). "
+                             "Defaults to value in config file.")
+    parser.add_argument("--basedir", type=str, default=None,
+                        help="Override data base directory. "
+                             "Defaults to value in config file.")
 
     args = parser.parse_args()
 
     experiment = SourceFileLoader(
         os.path.basename(args.experiment), args.experiment
     ).load_module()
+
+    # Apply runtime overrides ------------------------------------------------
+    if args.scene_name is not None:
+        scene = args.scene_name
+        experiment.config["data"]["sequence"] = scene
+        experiment.config["run_name"] = f"{scene}_{experiment.config['seed']}"
+    if args.basedir is not None:
+        experiment.config["data"]["basedir"] = args.basedir
 
     # Set Experiment Seed
     seed_everything(seed=experiment.config['seed'])

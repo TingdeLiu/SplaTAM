@@ -12,12 +12,12 @@ from os.path import join as p_join
 # ============================================================
 
 # Scene name: must match subdirectory under basedir
-scene_name = "gemini_scene_01"
+scene_name = "my_scene"
 
 primary_device = "cuda:0"
 seed = 0
 
-map_every = 1
+map_every = 5
 keyframe_every = 5
 mapping_window_size = 24  # Larger window for offline (more GPU memory available)
 tracking_iters = 50
