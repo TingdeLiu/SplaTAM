@@ -17,10 +17,10 @@ scene_name = "my_scene"
 primary_device = "cuda:0"
 seed = 0
 
-map_every = 5
+map_every = 2
 keyframe_every = 5
 mapping_window_size = 24  # Larger window for offline (more GPU memory available)
-tracking_iters = 50
+tracking_iters = 80
 mapping_iters = 60
 
 group_name = "Wheeltec_Gemini336L"
@@ -36,7 +36,7 @@ config = dict(
     mapping_window_size=mapping_window_size,
     report_global_progress_every=50,
     eval_every=5,
-    scene_radius_depth_ratio=3,
+    scene_radius_depth_ratio=4,   # handheld indoor: smaller scene radius
     mean_sq_dist_method="projective",
     gaussian_distribution="isotropic",
     report_iter_progress=False,
@@ -71,7 +71,7 @@ config = dict(
         forward_prop=True,
         num_iters=tracking_iters,
         use_sil_for_loss=True,
-        sil_thres=0.99,
+        sil_thres=0.5,
         use_l1=True,
         ignore_outlier_depth_loss=True,
         loss_weights=dict(
@@ -84,8 +84,8 @@ config = dict(
             unnorm_rotations=0.0,
             logit_opacities=0.0,
             log_scales=0.0,
-            cam_unnorm_rots=0.0005,
-            cam_trans=0.002,
+            cam_unnorm_rots=0.0015,   # handheld: 3x larger for fast rotation
+            cam_trans=0.005,           # handheld: 2.5x larger for fast translation
         ),
     ),
     mapping=dict(

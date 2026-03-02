@@ -709,74 +709,330 @@ curr_data = {
 
 ---
 
+## 完整 SLAM 主循环详解（逐步说明）
+
+下面按 `rgbd_slam()` 中每帧的实际执行顺序展开，结合关键代码行注释。
+
+---
+
+### 第一帧初始化（`time_idx == 0`）
+
+```
+initialize_first_timestep()
+  ├─ 从第一帧 RGB-D 生成原始点云        get_pointcloud()
+  │    深度反投影公式:
+  │    pts_cam = [x = (u - cx)/fx * d,
+  │               y = (v - cy)/fy * d,
+  │               z = d]
+  │    再通过 c2w = inv(w2c) 变换到世界坐标系
+  │
+  ├─ 初始化 N 个 Gaussians              initialize_params()
+  │    means3D   = 点云 XYZ
+  │    rgb_colors = 点云颜色
+  │    unnorm_rotations = [1,0,0,0] * N  (单位四元数)
+  │    logit_opacities  = 0              (sigmoid → 0.5)
+  │    log_scales = log(sqrt(d / f_avg)) (投影几何估算半径)
+  │    所有参数包装为 nn.Parameter (requires_grad=True)
+  │
+  ├─ 初始化相机轨迹张量
+  │    cam_unnorm_rots: [1, 4, num_frames]  ← 全部单位四元数
+  │    cam_trans:       [1, 3, num_frames]  ← 全部零向量
+  │
+  └─ 设置场景半径 scene_radius = max(depth) / scene_radius_depth_ratio
+```
+
+---
+
+### 每帧主循环（`time_idx > 0`）
+
+#### 步骤 1：相机位姿初始化
+
+```python
+# splatam.py:676
+params = initialize_camera_pose(params, time_idx, forward_prop=...)
+```
+
+| 条件 | 操作 |
+|------|------|
+| `time_idx == 1` 或 `forward_prop=False` | 直接复制前一帧位姿作为初始值 |
+| `time_idx > 1` 且 `forward_prop=True` | **恒速模型**：新位姿 = 前帧 + (前帧 - 前前帧) |
+
+恒速模型公式（四元数 + 平移各自独立外推）：
+```
+q_new  = normalize(q_{t-1} + (q_{t-1} - q_{t-2}))
+t_new  = t_{t-1} + (t_{t-1} - t_{t-2})
+```
+
+---
+
+#### 步骤 2：相机跟踪（Tracking）
+
+```
+splatam.py:680–746
+```
+
+**核心思路**：固定所有 Gaussians 参数，仅对当前帧的 `cam_unnorm_rots[t]` 和 `cam_trans[t]` 求导优化。
+
+```
+创建独立优化器 (仅包含 cam_unnorm_rots/cam_trans 的当前帧切片)
+记录 best_loss = ∞, best_rot, best_trans
+
+for iter in range(num_iters_tracking):   # 通常 10–80 次
+    ① transform_to_frame(gaussians_grad=False, camera_grad=True)
+       把所有 Gaussian 从世界坐标系变换到当前相机坐标系
+       仅相机位姿参数保留梯度
+
+    ② Renderer() → im(渲染RGB), depth(渲染深度), silhouette(轮廓)
+
+    ③ 构建损失掩码:
+       mask = (gt_depth > 0)
+       if ignore_outlier_depth_loss:
+           depth_error = |gt_depth - render_depth|
+           mask &= (depth_error < 10 * median(depth_error))
+       if use_sil_for_loss:
+           mask &= (silhouette > sil_thres)  ← 只在已有 Gaussian 覆盖区域计算
+
+    ④ L_track = λ_depth * Σ|D_gt - D_render|[mask]
+              + λ_rgb  * Σ|I_gt - I_render|[mask]
+
+    ⑤ loss.backward() → optimizer.step()
+
+    ⑥ if loss < best_loss:
+           best_loss = loss
+           保存当前 cam_unnorm_rots[t], cam_trans[t] 副本
+
+结束后：强制写回 best_rot, best_trans（非最后一次梯度步）
+```
+
+**为什么要保留最优候选**：跟踪优化可能过冲（overshoot），最后一次迭代不一定是最优位姿，保留所有迭代中损失最小的结果更鲁棒。
+
+**深度损失使用 sum 而非 mean**：相比建图阶段的 mean，跟踪用 sum 使损失对帧内遮罩大小敏感，有助于在轮廓外区域覆盖度不足时惩罚更重。
+
+---
+
+#### 步骤 3：轮廓驱动 Gaussian 增密（Densification）
+
+触发条件：`time_idx % map_every == 0` 且 `add_new_gaussians=True`
+
+```python
+# splatam.py:793–796
+add_new_gaussians(params, variables, densify_curr_data, sil_thres, time_idx, ...)
+```
+
+```
+渲染当前帧轮廓 silhouette[H, W]
+渲染当前帧深度 render_depth[H, W]
+
+non_presence_mask = (silhouette < sil_thres)          ← 未被 Gaussian 覆盖的像素
+                  | (render_depth > gt_depth           ← Gaussian 挡住了更近的物体
+                     AND depth_error > 50*median)
+
+对 non_presence_mask 中有效深度的像素:
+  get_pointcloud() → 反投影到世界坐标系 → 新点云
+  initialize_new_params() → 新 Gaussian 参数
+  torch.cat() 拼接到已有 params 上
+```
+
+每次增密后 variables（gradient_accum、max_2D_radius 等）也随之扩充。
+
+---
+
+#### 步骤 4：关键帧选择
+
+```python
+# splatam.py:810–819
+selected_keyframes = keyframe_selection_overlap(depth, curr_w2c, intrinsics,
+                                                keyframe_list[:-1], num_keyframes)
+# 然后强制加入最新关键帧 + 当前帧
+```
+
+重叠度计算流程（`utils/keyframe_selection.py`）：
+```
+① 从当前帧深度图随机采样 1600 个像素
+② 反投影到 3D 世界坐标 (pts_world)
+③ for each candidate_keyframe:
+       pts_cam = w2c_kf @ pts_world
+       project → (u, v)
+       overlap = # of (u,v) within [0,W] x [0,H] / 1600
+④ 按 overlap 降序取前 (mapping_window_size - 2) 帧
+```
+
+最终建图关键帧集合 = `selected_keyframes` + `keyframe_list[-1]` + `current_frame`
+
+---
+
+#### 步骤 5：建图（Mapping）
+
+```
+splatam.py:826–893
+```
+
+```
+创建新优化器 (包含所有 Gaussian 参数，cam 参数 lr=0)
+
+for iter in range(num_iters_mapping):   # 通常 10–60 次
+    ① 随机从 selected_keyframes 中选 1 帧 (包括当前帧)
+       ← 每次迭代换不同视角，防止过拟合单视角
+
+    ② transform_to_frame(gaussians_grad=True, camera_grad=False)
+
+    ③ Renderer() → im, depth, silhouette
+
+    ④ L_map = λ_depth * mean|D_gt - D_render|[mask]
+            + λ_rgb  * (0.8 * L1(I) + 0.2 * (1 - SSIM(I)))
+                      ↑ 建图用 SSIM 组合损失，跟踪只用 L1
+
+    ⑤ loss.backward()
+
+    ⑥ [可选] prune_gaussians()
+       移除 opacity < threshold 或尺度过大的 Gaussians
+
+    ⑦ [可选] densify() (梯度密集化)
+       累积 means2D 梯度，克隆/分裂高梯度 Gaussians
+
+    ⑧ optimizer.step()
+```
+
+---
+
+#### 步骤 6：关键帧入库
+
+```python
+# splatam.py:914–927
+# 每 keyframe_every 帧选一帧存入 keyframe_list
+# 同时保存: id, est_w2c, color, depth
+```
+
+---
+
+#### 步骤 7：检查点保存
+
+```python
+# splatam.py:930–933
+if time_idx % checkpoint_interval == 0:
+    save_params_ckpt(params, output_dir, time_idx)
+    np.save(f"keyframe_time_indices{time_idx}.npy", keyframe_time_indices)
+```
+
+---
+
+## IMU 辅助旋转初始化（wheeltec_online_slam.py）
+
+> **注意**：标准 `splatam.py`（离线模式）不使用 IMU，IMU 仅在 `wheeltec_online_slam.py` 的在线模式中实现。
+
+### 触发条件
+
+配置中设置 `use_imu_for_propagation=True` 且 ROS2 `/camera/gyro_accel/sample` 话题正常发布（~100 Hz）。
+
+### IMU 数据流
+
+```
+ROS2 /camera/gyro_accel/sample (~100 Hz)
+       ↓
+_imu_callback()
+       ↓
+_imu_buffer (deque, maxlen=500, 约5秒缓存)
+每条记录: {'ts': float, 'gyro': [ωx, ωy, ωz] rad/s}
+```
+
+### 帧间旋转积分（Rodrigues 公式）
+
+```python
+# wheeltec_online_slam.py:256–281
+def integrate_rotation(t_start, t_end) -> np.ndarray (3×3):
+    # 筛选时间窗口内的陀螺仪测量
+    window = [m for m in _imu_buffer if t_start < m['ts'] <= t_end]
+
+    R = I(3×3)
+    for m in window:
+        dt = m['ts'] - prev_ts
+        ω  = m['gyro']                     # rad/s
+        θ  = |ω| * dt                      # 转过的角度
+        axis = ω / |ω|                     # 旋转轴
+        K = skew_symmetric(axis)           # 反对称矩阵
+        dR = I + sin(θ)*K + (1-cos(θ))*K²  # Rodrigues 旋转矩阵
+        R = R @ dR
+    return R  # 从 t_start 到 t_end 的增量旋转
+```
+
+### 用于位姿初始化
+
+```python
+# wheeltec_online_slam.py:529–537
+# 在恒速模型之后，用 IMU 的 dR 覆盖旋转分量
+if imu_dR is not None:
+    R_w2c_prev = build_rotation(prev_rot_quat)        # 前帧旋转矩阵
+    R_w2c_new  = imu_dR.T @ R_w2c_prev               # imu_dR^T = camera-frame delta
+    params['cam_unnorm_rots'][..., t] = matrix_to_quaternion(R_w2c_new)
+```
+
+**为什么用 `imu_dR.T`**：陀螺仪积分得到的 `dR` 是 body（相机）坐标系下的旋转增量，对应 `c2w` 方向的变化。而系统存的是 `w2c`，所以需要转置。
+
+### IMU vs. 纯恒速模型对比
+
+| | 恒速模型（splatam.py） | IMU辅助（wheeltec_online_slam.py） |
+|---|---|---|
+| 旋转初始化 | 四元数线性外推 | 陀螺仪积分（更准确） |
+| 平移初始化 | 线性外推 | 仍用线性外推（无加速度计积分） |
+| 适用场景 | 运动平稳 | 快速旋转/手持抖动 |
+| 依赖 | 无外部传感器 | 需要 ROS2 IMU 话题 |
+
+### 轮式里程计辅助（可选）
+
+配置 `use_odom_init=True` 时，还会订阅 `/odom`：
+```
+/odom → _odom_callback() → _latest_odom (4×4 变换矩阵)
+```
+目前里程计数据随帧一起打包进 `frame['odom']`，可供未来扩展使用（当前版本中旋转初始化优先用 IMU，平移初始化仍依赖恒速模型）。
+
+---
+
 ## 重要算法详解
 
-### 1. 跟踪阶段优化
+### 1. 损失函数对比：跟踪 vs 建图
 
-**目标**: 估计当前帧相机位姿
+| 项目 | 跟踪（Tracking） | 建图（Mapping） |
+|------|------|------|
+| RGB 损失 | `sum(|I_gt - I_render|[mask])` | `0.8*L1 + 0.2*(1-SSIM)` |
+| 深度损失 | `sum(|D_gt - D_render|[mask])` | `mean(|D_gt - D_render|[mask])` |
+| 轮廓掩码 | 可选（use_sil_for_loss） | 不用 |
+| 异常深度过滤 | 可选（ignore_outlier_depth_loss） | 可选 |
+| 优化对象 | 相机位姿 | Gaussian 参数 |
 
-**固定参数**: Gaussians (means3D, rgb_colors, etc.)
+### 2. Gaussian 剪枝（prune_gaussians）
 
-**优化参数**: cam_unnorm_rots[:, :, t], cam_trans[:, :, t]
+**触发**：建图每次迭代内（在 `loss.backward()` 之后，`optimizer.step()` 之前）
 
-**损失函数**:
+**移除条件**：
+- `opacity < removal_opacity_threshold`（通常 0.005–0.02）
+- 超出 `scene_radius` 范围的 Gaussian（防止浮动噪点）
+- 达到 `stop_after` 迭代次数后停止剪枝
+
+### 3. 梯度密集化（densify，可选）
+
+**流程**：
 ```
-L_track = λ_rgb * L1(I_render, I_gt) + λ_depth * L1(D_render, D_gt)
+累积每次迭代的 means2D.grad → means2D_gradient_accum
+grad_mean2D = gradient_accum / denom
+
+for each Gaussian with grad_mean2D > grad_thresh:
+    if scale < scene_radius * 0.05:  克隆 (clone)
+    else:                             分裂 (split into 2)
 ```
 
-**可选遮罩**:
-- 轮廓遮罩: 仅计算Gaussians覆盖区域的损失
-- 深度异常值遮罩: 排除深度误差过大的像素
+**与轮廓密集化的区别**：
+- 轮廓密集化：基于渲染覆盖度，在图像空洞处补充新 Gaussian（每 `map_every` 帧一次）
+- 梯度密集化：基于优化梯度，在已有 Gaussian 细节不足处加密（每次建图迭代内）
 
-### 2. 建图阶段优化
-
-**目标**: 优化Gaussians参数
-
-**固定参数**: 相机位姿 (cam_unnorm_rots, cam_trans)
-
-**优化参数**: means3D, rgb_colors, unnorm_rotations, logit_opacities, log_scales
-
-**损失函数**:
-```
-L_map = λ_rgb * (0.8 * L1(I) + 0.2 * (1 - SSIM(I))) + λ_depth * L1(D)
-```
-
-**优化策略**:
-- 随机选择关键帧进行优化
-- 每次迭代优化一个关键帧
-- 关键帧通过重叠度选择
-
-### 3. Gaussian密集化
-
-**基于轮廓的添加**:
-1. 渲染当前帧轮廓
-2. 找到轮廓值 < 阈值的像素（未被覆盖）
-3. 从这些像素生成新点云
-4. 初始化新Gaussians并添加到场景
-
-**基于梯度的密集化** (可选):
-1. 累积Gaussians的2D投影梯度
-2. 克隆高梯度小Gaussians
-3. 分裂高梯度大Gaussians
-
-### 4. Gaussian剪枝
-
-**条件**:
-- 不透明度 < 阈值（通常0.005）
-- 尺度过大（超出场景范围）
-- 在某些迭代后定期剪枝
-
-### 5. 关键帧选择
+### 4. 关键帧选择（keyframe_selection_overlap）
 
 **重叠度计算**:
-1. 从当前帧采样像素 → 3D点云
-2. 投影到每个候选关键帧
-3. 计算落在图像内的点的比例
-4. 选择重叠度最高的K帧
+1. 从当前帧随机采样像素 → 反投影为 3D 点（使用当前帧估计位姿）
+2. 将 3D 点投影到每个候选关键帧的图像平面
+3. 计算落在 `[0,W] × [0,H]` 内的点比例 = 重叠度
+4. 取重叠度最高的 `mapping_window_size - 2` 帧
 
-**优点**:
-- 自动选择相关视角
-- 避免使用所有关键帧（节省计算）
+**组合策略**：重叠选帧 + 强制加最新关键帧 + 当前帧，确保局部一致性。
 
 ---
 
@@ -823,6 +1079,126 @@ N = 帧索引
 - 不透明度 (opacity)
 - 尺度 (scale_0, scale_1, scale_2)
 - 旋转四元数 (rot_0, rot_1, rot_2, rot_3)
+
+---
+
+## 论文核心理论（Paper: SplaTAM, arXiv 2312.02126）
+
+### 3D Gaussian 表示
+
+每个 Gaussian 仅用 **8 个参数**描述（相比原版 3DGS 更简洁）：
+
+| 参数 | 含义 | 维度 |
+|------|------|------|
+| **c** | RGB 颜色（view-independent） | 3 |
+| **μ** | 世界坐标系中心位置 | 3 |
+| **r** | 球形半径（各向同性）| 1 |
+| **o** | 不透明度 ∈ [0, 1] | 1 |
+
+**各向同性设计**的好处：参数更少，渲染更快，内存减少 57.5%（vs 各向异性），SLAM 场景下精度损失可忽略（ATE 0.55cm vs 0.57cm）。
+
+---
+
+### 可微分渲染公式（论文 Eq. 1–5）
+
+渲染按深度由近到远对所有 Gaussian 做 alpha 合成：
+
+**2D 投影**（world → image plane）：
+```
+μ^2D = K * E_t * μ / d        # 中心投影
+r^2D = f * r / d               # 半径投影（d = 深度，f = 焦距）
+```
+
+**单像素权重**（每个 Gaussian 对像素 p 的贡献）：
+```
+f_i(p) = o_i * exp(-||p - μ_i^2D||² / (2 * r_i^2D²))
+```
+
+**颜色渲染**（alpha 合成，前向遮挡）：
+```
+C(p) = Σ_i  c_i * f_i(p) * Π_{j<i}(1 - f_j(p))
+```
+
+**深度渲染**（加权深度）：
+```
+D(p) = Σ_i  d_i * f_i(p) * Π_{j<i}(1 - f_j(p))
+```
+
+**轮廓渲染**（累积不透明度，衡量地图覆盖程度）：
+```
+S(p) = Σ_i  f_i(p) * Π_{j<i}(1 - f_j(p))
+```
+
+`S(p) ≈ 1` 表示该像素已被 Gaussian 充分覆盖；`S(p) ≈ 0` 表示地图空洞。
+
+> 深度平方 D²(p) 也同步渲染，用于计算不确定性 σ² = D² - D²（代码中 `depth_sil[2]`）。
+
+---
+
+### 相机跟踪损失（论文 Eq. 8）
+
+```
+L_t = Σ_p  [S(p) > 0.99] * (L1(D(p)) + 0.5 * L1(C(p)))
+```
+
+**关键设计**：
+- **轮廓掩码** `[S(p) > 0.99]`：只在地图已充分覆盖的像素上计算损失，避免"新区域"干扰跟踪
+- **颜色权重 0.5**：深度是绝对几何约束（权重 1.0），RGB 是补充约束
+- 轮廓阈值 0.99（非 0.5）是关键：阈值 0.5 时 ATE 为 1.38cm，0.99 时为 **0.27cm**（5× 提升）
+
+---
+
+### Gaussian 增密掩码（论文 Eq. 9）
+
+```
+M(p) = (S(p) < 0.5)                               # 地图未覆盖
+      + (D_GT(p) < D(p)) * (L1(D(p)) > λ * MDE)  # 前景遮挡
+```
+
+- `λ = 50`，MDE = 当前帧深度误差中位数
+- 两个条件的并集：地图空洞 OR 有新前景物体出现
+
+**初始化半径**（论文 Eq. 6）：
+```
+r = D_GT / f      # 深度 / 焦距 = 投影到图像上约 1 像素大小
+```
+
+---
+
+### 各模块的实际耗时（RTX 3080 Ti，1200×980）
+
+| 模块 | 每次迭代 | 每帧 |
+|------|----------|------|
+| 跟踪（40 次迭代） | **25 ms** | 1.00 s |
+| 建图（60 次迭代） | **24 ms** | 1.44 s |
+| 总计（离线） | — | **~2.5 s/帧** |
+
+对比：NICE-SLAM 每帧 2.04s（跟踪）+ 4.50s（建图），Point-SLAM 0.76s + 4.50s。
+
+**SplaTAM-S**（精简版，10 + 15 次迭代）：**0.19s 跟踪 + 0.33s 建图**，适合 Jetson 等嵌入式设备。
+
+---
+
+### 消融实验关键结论（Replica/Room 0, ATE RMSE）
+
+**跟踪消融**（Table 5）：
+
+| 恒速传播 | 轮廓掩码 | 轮廓阈值 | ATE (cm) | Depth L1 (cm) | PSNR (dB) |
+|----------|----------|----------|----------|---------------|-----------|
+| ✗ | ✗ | 0.99 | 2.95 | 2.15 | 25.40 |
+| ✓ | ✗ | 0.99 | 115.80 | ✗（跟踪失败）| — |
+| ✓ | ✓ | 0.5 | 1.38 | 12.58 | 31.30 |
+| ✓ | ✓ | **0.99** | **0.27** | **0.49** | **32.81** |
+
+**结论**：
+1. **恒速模型是必要的**（但若没有轮廓掩码则会发散）
+2. **轮廓掩码 + 高阈值 0.99 是核心**，缺一不可
+3. 无轮廓掩码时恒速模型反而更差（位姿初始化更激进但损失无法正确引导）
+
+**颜色/深度消融**（Table 4）：
+- 只用深度：跟踪完全失败（L1 深度无法提供 x-y 方向约束）
+- 只用颜色：能跟踪但 ATE 高 5×（缺少绝对尺度）
+- 颜色 + 深度：**最优**
 
 ---
 

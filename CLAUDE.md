@@ -39,6 +39,10 @@ pip install -r venv_requirements.txt
 # Run SplaTAM on a dataset
 python scripts/splatam.py configs/<dataset>/splatam.py
 
+# CLI overrides (bypass editing the config file)
+python scripts/splatam.py configs/<dataset>/splatam.py \
+    --scene_name <scene> --basedir <path>
+
 # Examples:
 python scripts/splatam.py configs/replica/splatam.py
 python scripts/splatam.py configs/tum/splatam.py
@@ -254,6 +258,58 @@ config['wandb'] = dict(
 - Can use different resolutions for tracking, mapping, and densification
 - Set `tracking_image_height/width`, `densification_image_height/width` in data config
 - Useful for balancing speed vs. quality
+
+## Wheeltec Robot / ROS2 Real-time Deployment
+
+This codebase includes support for live SLAM on a Wheeltec robot or handheld, using ROS2 + Orbbec cameras (Astra S or Gemini 336L).
+
+### Online SLAM (live ROS2 stream)
+```bash
+# Wheeltec robot with Gemini 336L (Jetson Orin NX)
+python scripts/wheeltec_online_slam.py configs/wheeltec/online_slam_gemini336l.py \
+    --scene_name office_scan_01 [--num_frames 500]
+
+# Handheld (laptop, USB)
+python scripts/wheeltec_online_slam.py configs/hand/online_slam_gemini336l.py \
+    --scene_name handheld_scan_01
+```
+`--scene_name` creates a unique experiment subdirectory so scans don't overwrite each other.
+
+### Offline SLAM (from ROS2 bag)
+```bash
+# Step 1: Convert bag to dataset
+python scripts/wheeltec_rosbag_to_splatam.py my_scene_bag/ data/wheeltec_gemini/my_scene
+
+# Step 2: Run SLAM (--scene_name and --basedir override config file values)
+python scripts/splatam.py configs/wheeltec/splatam_gemini336l.py \
+    --scene_name my_scene [--basedir ./data/wheeltec_gemini]
+```
+
+### PLY Export
+```bash
+# 3DGS format (for 3DGS viewers / SuperSplat)
+python scripts/export_ply.py configs/<dataset>/splatam.py [--scene_name <scene>]
+
+# Standard RGB point cloud (for CloudCompare / MeshLab / Open3D)
+python scripts/export_ply_cloudcompare.py configs/<dataset>/splatam.py \
+    [--scene_name <scene>] [--opacity_threshold 0.5]
+```
+
+Output files: `experiments/<group>/<scene>_<seed>/splat.ply` and `splat_rgb.ply`.
+
+### Key config directories
+- `configs/wheeltec/` — robot configs (online + offline, Astra S + Gemini 336L)
+- `configs/hand/` — handheld configs (Gemini 336L, IMU-assisted, no odometry)
+- `configs/data/wheeltec_gemini336l.yaml` — dataset YAML for Gemini 336L
+
+### ROS2 topics expected
+| Topic | Description |
+|-------|-------------|
+| `/camera/color/image_raw` | RGB frames |
+| `/camera/depth/image_raw` | Depth frames |
+| `/camera/color/camera_info` | Intrinsics (auto-read at runtime) |
+| `/camera/gyro_accel/sample` | IMU (~100 Hz, needed if `use_imu_for_propagation=True`) |
+| `/odom` | Wheel odometry (robot only, optional) |
 
 ## Batch Processing
 

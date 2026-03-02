@@ -47,23 +47,18 @@ SplaTAM/
 ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
 ros2 topic hz /camera/gyro_accel/sample   # 应显示 ~100 Hz
 
-# 终端 2：启动手持 SLAM
+# 终端 2：启动手持 SLAM（--scene_name 指定本次扫描名称，结果自动存入独立目录）
 cd VLN/SplaTAM
-python scripts/wheeltec_online_slam.py configs/hand/online_slam_gemini336l.py
+python scripts/wheeltec_online_slam.py configs/hand/online_slam_gemini336l.py \
+    --scene_name handheld_scan_01
 ```
 
-### 更换扫描场景
-
-编辑 `configs/hand/online_slam_gemini336l.py` 第 14 行：
-
-```python
-scene_name = "handheld_scan_02"   # 每次扫描改这里，结果存入独立目录
-```
+> **每次扫描换一个 `--scene_name`**，无需修改配置文件，结果自动存入独立目录，不会互相覆盖。
 
 ### 输出目录
 
 ```
-experiments/Handheld_Gemini336L/<scene_name>_0/
+experiments/Handheld_Gemini336L/handheld_scan_01_0/
 ├── params.npz      # 高斯地图（可视化/导出用）
 ├── rgb/            # 原始彩色帧
 ├── depth/          # 原始深度帧（mm，uint16）
@@ -74,7 +69,9 @@ experiments/Handheld_Gemini336L/<scene_name>_0/
 ### 可视化
 
 ```bash
+# 可视化时同样用 --scene_name 指定要查看的那次扫描
 python viz_scripts/final_recon.py configs/hand/online_slam_gemini336l.py
+# 注意：final_recon.py 读取配置中的 scene_name，需先确认配置中的默认值或直接用实验路径
 ```
 
 ### 手持操作要点
@@ -87,15 +84,20 @@ python viz_scripts/final_recon.py configs/hand/online_slam_gemini336l.py
 ### 重建结果后处理
 
 ```bash
-# 导出 3DGS 格式点云 → experiments/Handheld_Gemini336L/<scene_name>_0/splat.ply
-python scripts/export_ply.py configs/hand/online_slam_gemini336l.py
+SCENE=handheld_scan_01   # 替换为实际的扫描名称
+
+# 导出 3DGS 格式点云 → experiments/Handheld_Gemini336L/${SCENE}_0/splat.ply
+python scripts/export_ply.py configs/hand/online_slam_gemini336l.py \
+    --scene_name $SCENE
 
 # 导出标准 RGB 点云（CloudCompare / MeshLab 可直接打开）
-# → experiments/Handheld_Gemini336L/<scene_name>_0/splat_rgb.ply
-python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py
+# → experiments/Handheld_Gemini336L/${SCENE}_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py \
+    --scene_name $SCENE
 
 # 调整透明度阈值过滤噪点（默认 0.5，越大越干净但点越少）
-python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py --opacity_threshold 0.3
+python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py \
+    --scene_name $SCENE --opacity_threshold 0.3
 ```
 
 | 文件 | 格式 | 颜色属性 | 查看工具 |
@@ -113,21 +115,25 @@ python scripts/export_ply_cloudcompare.py configs/hand/online_slam_gemini336l.py
 
 ```bash
 # 终端 1：启动相机驱动
-ros2 launch orbbec_camera gemini_336l.launch.py
+ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
 
 # 确认话题正常
 ros2 topic hz /camera/color/image_raw
 ros2 topic hz /camera/depth/image_raw
 ros2 topic hz /camera/gyro_accel/sample
 
-# 终端 2：启动小车 SLAM
-cd /path/to/SplaTAM
-python scripts/wheeltec_online_slam.py configs/wheeltec/online_slam_gemini336l.py
-
-# 可选：指定最大帧数
+# 终端 2：启动小车 SLAM（--scene_name 指定本次扫描名称）
+cd VLN/SplaTAM
 python scripts/wheeltec_online_slam.py configs/wheeltec/online_slam_gemini336l.py \
-    --num_frames 1000
+    --scene_name office_scan_01
+
+# 可选：同时指定最大帧数
+python scripts/wheeltec_online_slam.py configs/wheeltec/online_slam_gemini336l.py \
+    --scene_name office_scan_01 \
+    --num_frames 500
 ```
+
+> **每次扫描换一个 `--scene_name`**，结果自动存入 `experiments/Wheeltec_Gemini336L/<scene_name>_0/`，不会覆盖之前的数据。
 
 ### 运行时输出说明
 
@@ -145,7 +151,7 @@ Camera intrinsics received: fx=649.2, fy=648.8, cx=638.1, cy=361.4
 ```
 Ctrl+C → 当前帧处理完毕后安全退出
 
-输出：experiments/Wheeltec_Gemini336L/online_office_0/
+输出：experiments/Wheeltec_Gemini336L/office_scan_01_0/
 ├── params.npz           # 高斯地图参数
 ├── rgb/                 # 原始彩色帧
 ├── depth/               # 原始深度帧（mm，uint16）
@@ -162,15 +168,20 @@ python viz_scripts/final_recon.py configs/wheeltec/online_slam_gemini336l.py
 ### 重建结果后处理
 
 ```bash
-# 导出 3DGS 格式点云 → experiments/Wheeltec_Gemini336L/online_office_0/splat.ply
-python scripts/export_ply.py configs/wheeltec/online_slam_gemini336l.py
+SCENE=office_scan_01   # 替换为实际的扫描名称
+
+# 导出 3DGS 格式点云 → experiments/Wheeltec_Gemini336L/${SCENE}_0/splat.ply
+python scripts/export_ply.py configs/wheeltec/online_slam_gemini336l.py \
+    --scene_name $SCENE
 
 # 导出标准 RGB 点云（CloudCompare / MeshLab 可直接打开）
-# → experiments/Wheeltec_Gemini336L/online_office_0/splat_rgb.ply
-python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py
+# → experiments/Wheeltec_Gemini336L/${SCENE}_0/splat_rgb.ply
+python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py \
+    --scene_name $SCENE
 
 # 调整透明度阈值过滤噪点（默认 0.5，越大越干净但点越少）
-python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py --opacity_threshold 0.3
+python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam_gemini336l.py \
+    --scene_name $SCENE --opacity_threshold 0.3
 
 # 在线可视化（建图时同步查看）
 python viz_scripts/online_recon.py configs/wheeltec/online_slam_gemini336l.py
@@ -189,6 +200,8 @@ python viz_scripts/online_recon.py configs/wheeltec/online_slam_gemini336l.py
 
 ### 第一步：录制 ROS2 bag
 
+cd VLN/SplaTAM
+
 ```bash
 # 只录需要的话题，减小文件体积
 ros2 bag record \
@@ -197,7 +210,7 @@ ros2 bag record \
     /camera/color/camera_info \
     /camera/depth/camera_info \
     /camera/gyro_accel/sample \
-    -o my_scene_bag
+    -o data/my_scene_bag
 ```
 
 > **建议**：录制时保持相机 30fps，存储需约 200MB/分钟（1280×720 彩色 + 848×480 深度）。
@@ -206,7 +219,7 @@ ros2 bag record \
 
 ```bash
 python scripts/wheeltec_rosbag_to_splatam.py \
-    my_scene_bag/          \   # ROS2 bag 目录
+    data/my_scene_bag/          \   # ROS2 bag 目录
     data/wheeltec_gemini/my_scene
 ```
 

@@ -36,15 +36,17 @@ pip install cyclonedds  # DDS 通信库
 iPhone 发帧 → PC 实时做 SLAM。
 
 ```bash
-# 修改配置
+# 每次扫描前修改配置中的场景名，避免结果互相覆盖
 vim configs/iphone/online_demo.py
 # 关键参数:
-#   num_frames = 100        # 采集帧数
-#   scene_name = "my_room"  # 场景名称
+#   num_frames = 100            # 采集帧数
+#   scene_name = "office_01"   # 每次扫描改这里，结果存入独立目录
 
 # 启动（需 sudo 设置网络缓冲区）
 bash bash_scripts/online_demo.bash configs/iphone/online_demo.py
 ```
+
+> **注意**：iPhone 模式通过 bash 脚本启动，不支持 `--scene_name` 命令行参数。**每次扫描都必须先修改配置文件中的 `scene_name`**，否则会覆盖上次结果。
 
 操作步骤:
 1. PC 终端出现 "Waiting for frames..."
@@ -125,14 +127,22 @@ experiments/iPhone_Captures/{scene_name}/
 ## 查看结果
 
 ```bash
-# SplaTAM 内置可视化
+SCENE=office_01   # 替换为实际的扫描名称（即配置文件中的 scene_name）
+
+# SplaTAM 内置可视化（读取当前配置中的 scene_name）
 python viz_scripts/final_recon.py configs/iphone/online_demo.py
 
-# 导出 3DGS 格式 PLY
-python scripts/export_ply.py configs/iphone/online_demo.py
+# 导出 3DGS 格式 PLY → experiments/iPhone_Captures/${SCENE}/splat.ply
+python scripts/export_ply.py configs/iphone/online_demo.py \
+    --scene_name $SCENE
 
 # 导出标准 RGB 点云 (CloudCompare 可直接看颜色)
-python scripts/export_ply_cloudcompare.py configs/iphone/online_demo.py
+python scripts/export_ply_cloudcompare.py configs/iphone/online_demo.py \
+    --scene_name $SCENE
+
+# 调整透明度阈值过滤噪点
+python scripts/export_ply_cloudcompare.py configs/iphone/online_demo.py \
+    --scene_name $SCENE --opacity_threshold 0.3
 
 # 后处理精细优化（可选，显著提升质量）
 python scripts/post_splatam_opt.py configs/iphone/post_splatam_opt.py

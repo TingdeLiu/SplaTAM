@@ -91,6 +91,8 @@ def parse_args():
                         help="Filter out Gaussians with opacity below this (default: 0.5)")
     parser.add_argument("--output", type=str, default=None,
                         help="Output PLY path (default: splat_rgb.ply in results dir)")
+    parser.add_argument("--scene_name", type=str, default=None,
+                        help="Override scene name to export from a specific run (e.g. office_scan_02)")
     return parser.parse_args()
 
 
@@ -104,6 +106,8 @@ if __name__ == "__main__":
 
     work_path = config['workdir']
     run_name = config['run_name']
+    if args.scene_name:
+        run_name = f"{args.scene_name}_{config['seed']}"
     params_path = os.path.join(work_path, run_name, "params.npz")
 
     if not os.path.exists(params_path):

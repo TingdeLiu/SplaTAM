@@ -75,15 +75,17 @@ ros2 topic hz /camera/color/image_raw  # 应 ~30 Hz
 cd /path/to/SplaTAM
 conda activate splatam
 
-# 默认配置 (500帧)
-python scripts/wheeltec_online_slam.py configs/wheeltec/online_slam.py
-
-# 自定义参数
+# 指定场景名（每次扫描换一个名称，结果存入独立目录）
 python scripts/wheeltec_online_slam.py configs/wheeltec/online_slam.py \
-    --num_frames 300 \
-    --rgb_topic /camera/color/image_raw \
-    --depth_topic /camera/depth/image_raw
+    --scene_name office_scan_01
+
+# 同时指定最大帧数
+python scripts/wheeltec_online_slam.py configs/wheeltec/online_slam.py \
+    --scene_name office_scan_01 \
+    --num_frames 300
 ```
+
+> **每次扫描换一个 `--scene_name`**，结果存入 `experiments/Wheeltec_Online/<scene_name>_0/`，不会覆盖之前的数据。
 
 #### 3. 采集过程
 
@@ -232,16 +234,19 @@ experiments/Wheeltec/<scene_name>_0/
 ### 导出 PLY 点云
 
 ```bash
+SCENE=office_scan_01   # 替换为实际的扫描名称
+
 # 方式 1: 3DGS 格式 (f_dc_0/1/2 球谐系数，用于 3DGS Viewer / 后续优化)
-python scripts/export_ply.py configs/wheeltec/splatam.py          # 离线
-python scripts/export_ply.py configs/wheeltec/online_slam.py      # 在线
+python scripts/export_ply.py configs/wheeltec/online_slam.py --scene_name $SCENE   # 在线
+python scripts/export_ply.py configs/wheeltec/splatam.py     --scene_name $SCENE   # 离线
 
 # 方式 2: 标准 RGB 点云 (red/green/blue 顶点颜色，用于 CloudCompare / MeshLab)
-python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam.py
-python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam.py
+python scripts/export_ply_cloudcompare.py configs/wheeltec/online_slam.py --scene_name $SCENE
+python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam.py     --scene_name $SCENE
 
 # 调整透明度阈值过滤噪点 (默认 0.5，越大越干净但点越少)
-python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam.py --opacity_threshold 0.3
+python scripts/export_ply_cloudcompare.py configs/wheeltec/splatam.py \
+    --scene_name $SCENE --opacity_threshold 0.3
 ```
 
 | 文件 | 格式 | 颜色属性 | 查看工具 |

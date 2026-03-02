@@ -802,6 +802,9 @@ def parse_args():
     parser.add_argument("--rgb_topic", type=str, default=None, help="Override RGB topic")
     parser.add_argument("--depth_topic", type=str, default=None, help="Override Depth topic")
     parser.add_argument("--num_frames", type=int, default=None, help="Override max frames")
+    parser.add_argument("--seed", type=int, default=None, help="Override random seed")
+    parser.add_argument("--scene_name", type=str, default=None,
+                        help="Override scene name; output saved to <workdir>/<scene_name>_<seed>/")
     return parser.parse_args()
 
 
@@ -821,6 +824,11 @@ if __name__ == "__main__":
         config['ros2']['depth_topic'] = args.depth_topic
     if args.num_frames:
         config['num_frames'] = args.num_frames
+    if args.seed is not None:
+        config['seed'] = args.seed
+    if args.scene_name:
+        config['run_name'] = f"{args.scene_name}_{config['seed']}"
+        config['data']['sequence'] = args.scene_name
 
     if 'gaussian_distribution' not in config:
         config['gaussian_distribution'] = 'isotropic'

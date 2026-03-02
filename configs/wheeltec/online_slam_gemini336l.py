@@ -26,14 +26,14 @@ num_frames = 500  # Set to -1 for unlimited
 full_res_width = 1280
 full_res_height = 720
 downscale_factor = 2.0          # Tracking at 640×360
-densify_downscale_factor = 1.0  # Densification at 1280×720
+densify_downscale_factor = 2.0  # Densification at 640×360 (was 1.0 @ 1280×720, 4x fewer gaussians)
 
 # SLAM frequency
-map_every = 1
+map_every = 5         # was 2 → less frequent mapping
 keyframe_every = 5
 mapping_window_size = 16  # Keep small for Jetson memory
-tracking_iters = 30
-mapping_iters = 30
+tracking_iters = 10   # was 30 → 3x faster tracking
+mapping_iters = 10    # was 30 → 3x faster mapping
 
 group_name = "Wheeltec_Gemini336L"
 run_name = f"{scene_name}_{seed}"
@@ -93,8 +93,8 @@ config = dict(
         densify_downscale_factor=densify_downscale_factor,
         desired_image_height=int(full_res_height // downscale_factor),       # 360
         desired_image_width=int(full_res_width // downscale_factor),          # 640
-        densification_image_height=int(full_res_height // densify_downscale_factor),  # 720
-        densification_image_width=int(full_res_width // densify_downscale_factor),    # 1280
+        densification_image_height=int(full_res_height // densify_downscale_factor),  # 360
+        densification_image_width=int(full_res_width // densify_downscale_factor),    # 640
         start=0,
         end=-1,
         stride=1,
@@ -109,7 +109,7 @@ config = dict(
         sil_thres=0.99,
         use_l1=True,
         use_depth_loss_thres=True,
-        depth_loss_thres=20000,
+        depth_loss_thres=50000,  # was 20000 → easier to satisfy, avoids iter doubling
         # Stereo depth noise grows with distance; outlier rejection is important
         # at long range (beyond ~6m optimal).
         ignore_outlier_depth_loss=True,
@@ -135,7 +135,7 @@ config = dict(
     mapping=dict(
         num_iters=mapping_iters,
         add_new_gaussians=True,
-        sil_thres=0.5,
+        sil_thres=0.9,  # was 0.5 → stricter threshold, fewer spurious gaussians added
         use_l1=True,
         use_sil_for_loss=False,
         ignore_outlier_depth_loss=True,
@@ -159,10 +159,10 @@ config = dict(
         pruning_dict=dict(
             start_after=0,
             remove_big_after=0,
-            stop_after=15,
-            prune_every=15,
-            removal_opacity_threshold=0.01,
-            final_removal_opacity_threshold=0.01,
+            stop_after=100000,           # was 15 → never stop pruning
+            prune_every=5,               # was 15 → prune more frequently
+            removal_opacity_threshold=0.05,        # was 0.01 → remove more low-quality gaussians
+            final_removal_opacity_threshold=0.05,  # was 0.01
             reset_opacities=False,
             reset_opacities_every=500,
         ),

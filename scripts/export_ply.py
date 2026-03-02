@@ -47,6 +47,8 @@ def save_ply(path, means, scales, rotations, rgbs, opacities, normals=None):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("config", type=str, help="Path to config file.")
+    parser.add_argument("--scene_name", type=str, default=None,
+                        help="Override scene name to export from a specific run (e.g. office_scan_02)")
     return parser.parse_args()
 
 
@@ -58,6 +60,8 @@ if __name__ == "__main__":
     config = experiment.config
     work_path = config['workdir']
     run_name = config['run_name']
+    if args.scene_name:
+        run_name = f"{args.scene_name}_{config['seed']}"
     params_path = os.path.join(work_path, run_name, "params.npz")
 
     params = dict(np.load(params_path, allow_pickle=True))
